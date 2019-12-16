@@ -24,7 +24,6 @@ use crate::Result;
 use failure::{bail, ensure, format_err, ResultExt};
 use log::{error, info, warn};
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
 use std::convert::TryFrom;
 use transit_model_collection::*;
 
@@ -250,8 +249,6 @@ pub fn manage_stop_times(collections: &mut Collections, path: &path::Path) -> Re
     info!("Reading stop_times.txt");
     let path = path.join("stop_times.txt");
     let mut rdr = csv::Reader::from_path(&path).with_context(ctx_from_path!(path))?;
-    let mut headsigns = HashMap::new();
-    let mut stop_time_ids = HashMap::new();
     for stop_time in rdr.deserialize() {
         let stop_time: StopTime = stop_time.with_context(ctx_from_path!(path))?;
         let stop_point_idx = collections
@@ -275,9 +272,6 @@ pub fn manage_stop_times(collections: &mut Collections, path: &path::Path) -> Re
                 )
             })?;
 
-        if let Some(headsign) = stop_time.stop_headsign {
-            headsigns.insert((vj_idx, stop_time.stop_sequence), headsign);
-        }
         let datetime_estimated = stop_time.datetime_estimated.map_or_else(
             || match collections.stop_points[stop_point_idx].stop_type {
                 StopType::Zone => true,
@@ -294,17 +288,15 @@ pub fn manage_stop_times(collections: &mut Collections, path: &path::Path) -> Re
             }
         });
 
-        if let Some(stop_time_id) = stop_time.stop_time_id {
-            stop_time_ids.insert((vj_idx, stop_time.stop_sequence), stop_time_id);
-        }
-
         collections
             .vehicle_journeys
             .index_mut(vj_idx)
             .stop_times
             .push(crate::objects::StopTime {
+                id: stop_time.stop_time_id.map(Box::new),
                 stop_point_idx,
                 sequence: stop_time.stop_sequence,
+                headsign: stop_time.stop_headsign.map(Box::new),
                 arrival_time: stop_time.arrival_time,
                 departure_time: stop_time.departure_time,
                 boarding_duration: stop_time.boarding_duration,
@@ -314,10 +306,9 @@ pub fn manage_stop_times(collections: &mut Collections, path: &path::Path) -> Re
                 datetime_estimated,
                 local_zone_id: stop_time.local_zone_id,
                 precision,
+                comment_links: None,
             });
     }
-    collections.stop_time_headsigns = headsigns;
-    collections.stop_time_ids = stop_time_ids;
     let mut vehicle_journeys = collections.vehicle_journeys.take();
     for vj in &mut vehicle_journeys {
         vj.stop_times.sort_unstable_by_key(|st| st.sequence);
@@ -443,30 +434,47 @@ where
 }
 
 fn insert_stop_time_comment_link(
-    stop_time_comments: &mut HashMap<(Idx<VehicleJourney>, u32), Idx<Comment>>,
-    stop_time_ids: &HashMap<&String, (Idx<VehicleJourney>, u32)>,
+    vehicle_journeys: &mut CollectionWithId<VehicleJourney>,
     comments: &CollectionWithId<Comment>,
     comment_link: &CommentLink,
 ) -> Result<()> {
-    let idx_sequence = match stop_time_ids.get(&comment_link.object_id) {
-        Some(idx_sequence) => idx_sequence,
-        None => {
-            error!(
-                "comment_links.txt: object_type={} object_id={} not found",
-                comment_link.object_type.as_str(),
-                comment_link.object_id
-            );
-            return Ok(());
+    let vehicle_journey_id = vehicle_journeys
+        .values()
+        .find(|vj| {
+            vj.stop_times.iter().any(|st| {
+                st.id
+                    .as_ref()
+                    .map(|id| **id == comment_link.object_id)
+                    .unwrap_or(false)
+            })
+        })
+        .map(|vj| vj.id.clone());
+    if let Some(vehicle_journey_id) = vehicle_journey_id {
+        let mut vehicle_journey = vehicle_journeys.get_mut(&vehicle_journey_id).unwrap();
+        for stop_time in vehicle_journey.stop_times.iter_mut() {
+            if let Some(stop_time_id) = &stop_time.id {
+                if **stop_time_id == comment_link.object_id {
+                    let comment_idx = match comments.get_idx(&comment_link.comment_id) {
+                        Some(comment_idx) => comment_idx,
+                        None => bail!(
+                            "comment.txt: comment_id={} not found",
+                            comment_link.comment_id
+                        ),
+                    };
+                    stop_time
+                        .comment_links
+                        .get_or_insert_with(|| Box::new(CommentLinksT::default()))
+                        .insert(comment_idx);
+                }
+            }
         }
-    };
-    let comment_idx = match comments.get_idx(&comment_link.comment_id) {
-        Some(comment_idx) => comment_idx,
-        None => bail!(
-            "comment.txt: comment_id={} not found",
-            comment_link.comment_id
-        ),
-    };
-    stop_time_comments.insert(*idx_sequence, comment_idx);
+    } else {
+        error!(
+            "comment_links.txt: object_type={} object_id={} not found",
+            comment_link.object_type.as_str(),
+            comment_link.object_id
+        );
+    }
     Ok(())
 }
 
@@ -476,12 +484,6 @@ pub fn manage_comments(collections: &mut Collections, path: &path::Path) -> Resu
 
         let path = path.join("comment_links.txt");
         if let Ok(mut rdr) = csv::Reader::from_path(&path) {
-            // invert the stop_time_ids map to search a stop_time by it's id
-            let stop_time_ids = collections
-                .stop_time_ids
-                .iter()
-                .map(|(k, v)| (v, *k))
-                .collect();
             info!("Reading comment_links.txt");
             for comment_link in rdr.deserialize() {
                 let comment_link: CommentLink = comment_link.with_context(ctx_from_path!(path))?;
@@ -512,8 +514,7 @@ pub fn manage_comments(collections: &mut Collections, path: &path::Path) -> Resu
                         &comment_link,
                     )?,
                     ObjectType::StopTime => insert_stop_time_comment_link(
-                        &mut collections.stop_time_comments,
-                        &stop_time_ids,
+                        &mut collections.vehicle_journeys,
                         &collections.comments,
                         &comment_link,
                     )?,

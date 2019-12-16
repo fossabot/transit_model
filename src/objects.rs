@@ -829,8 +829,10 @@ impl std::fmt::Display for Time {
 
 #[derive(Debug, PartialEq, Eq, Clone)]
 pub struct StopTime {
+    pub id: Option<Box<String>>,
     pub stop_point_idx: Idx<StopPoint>,
     pub sequence: u32,
+    pub headsign: Option<Box<String>>,
     pub arrival_time: Time,
     pub departure_time: Time,
     pub boarding_duration: u16,
@@ -840,6 +842,18 @@ pub struct StopTime {
     pub datetime_estimated: bool,
     pub local_zone_id: Option<u16>,
     pub precision: Option<StopTimePrecision>,
+    pub comment_links: Option<Box<CommentLinksT>>,
+}
+impl CommentLinks for StopTime {
+    /// Will panic if `comment_links` has not been initialized
+    fn comment_links(&self) -> &CommentLinksT {
+        self.comment_links.as_ref().unwrap()
+    }
+    fn comment_links_mut(&mut self) -> &mut CommentLinksT {
+        self.comment_links
+            .get_or_insert_with(|| Box::new(CommentLinksT::default()))
+            .as_mut()
+    }
 }
 
 impl Ord for StopTime {

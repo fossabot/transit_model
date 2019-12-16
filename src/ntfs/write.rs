@@ -98,8 +98,6 @@ pub fn write_vehicle_journeys_and_stop_times(
     path: &path::Path,
     vehicle_journeys: &CollectionWithId<VehicleJourney>,
     stop_points: &CollectionWithId<StopPoint>,
-    stop_time_headsigns: &HashMap<(Idx<VehicleJourney>, u32), String>,
-    stop_time_ids: &HashMap<(Idx<VehicleJourney>, u32), String>,
 ) -> Result<()> {
     info!("Writing trips.txt and stop_times.txt");
     let trip_path = path.join("trips.txt");
@@ -133,8 +131,8 @@ pub fn write_vehicle_journeys_and_stop_times(
                     drop_off_type: st.drop_off_type,
                     datetime_estimated: Some(st.datetime_estimated as u8),
                     local_zone_id: st.local_zone_id,
-                    stop_headsign: stop_time_headsigns.get(&(vj_idx, st.sequence)).cloned(),
-                    stop_time_id: stop_time_ids.get(&(vj_idx, st.sequence)).cloned(),
+                    stop_headsign: st.headsign.map(|headsign| (*headsign).clone()),
+                    stop_time_id: st.id.map(|id| (*id).clone()),
                     precision,
                 })
                 .with_context(ctx_from_path!(st_wtr))?;
@@ -629,8 +627,8 @@ pub fn write_comments(path: &path::Path, collections: &Collections) -> Result<()
 
     write_stop_time_comment_links(
         &mut cl_wtr,
-        &collections.stop_time_ids,
-        &collections.stop_time_comments,
+        &HashMap::new(),
+        &HashMap::new(),
         &collections.comments,
         &comment_links_path,
     )?;

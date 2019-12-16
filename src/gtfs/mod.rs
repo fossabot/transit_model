@@ -447,7 +447,7 @@ pub fn write<P: AsRef<Path>>(model: Model, path: P) -> Result<()> {
         path,
         &model.vehicle_journeys,
         &model.stop_points,
-        &model.stop_time_headsigns,
+        &std::collections::HashMap::new(),
     )?;
     write::write_shapes(path, &model.geometries)?;
     write_collection_with_id(path, "pathways.txt", &model.pathways)?;

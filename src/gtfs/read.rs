@@ -381,10 +381,9 @@ where
     let mut rdr = csv::ReaderBuilder::new()
         .trim(csv::Trim::All)
         .from_reader(reader);
-    let mut headsigns = HashMap::new();
     let mut tmp_vjs = HashMap::new();
     for stop_time in rdr.deserialize() {
-        let mut stop_time: StopTime = stop_time.with_context(ctx_from_path!(path))?;
+        let stop_time: StopTime = stop_time.with_context(ctx_from_path!(path))?;
         let vj_idx = collections
             .vehicle_journeys
             .get_idx(&stop_time.trip_id)
@@ -396,18 +395,11 @@ where
                 )
             })?;
 
-        // consume the stop headsign
-        let headsign = std::mem::replace(&mut stop_time.stop_headsign, None);
-        if let Some(headsign) = headsign {
-            headsigns.insert((vj_idx, stop_time.stop_sequence), headsign);
-        }
-
         tmp_vjs
             .entry(vj_idx)
             .or_insert_with(|| vec![])
             .push(stop_time);
     }
-    collections.stop_time_headsigns = headsigns;
 
     for (vj_idx, mut stop_times) in tmp_vjs {
         stop_times.sort_unstable_by_key(|st| st.stop_sequence);
@@ -433,8 +425,10 @@ where
             };
 
             vj.stop_times.push(objects::StopTime {
+                id: None,
                 stop_point_idx,
                 sequence: stop_time.stop_sequence,
+                headsign: stop_time.stop_headsign.clone().map(Box::new),
                 arrival_time: st_values.arrival_time,
                 departure_time: st_values.departure_time,
                 boarding_duration: 0,
@@ -444,6 +438,7 @@ where
                 datetime_estimated: st_values.datetime_estimated,
                 local_zone_id: stop_time.local_zone_id,
                 precision,
+                comment_links: None,
             });
         }
     }
@@ -1162,8 +1157,10 @@ where
                         .stop_times
                         .iter()
                         .map(|stop_time| NtfsStopTime {
+                            id: None,
                             stop_point_idx: stop_time.stop_point_idx,
                             sequence: stop_time.sequence,
+                            headsign: None,
                             arrival_time: stop_time.arrival_time + start_time - arrival_time_delta,
                             departure_time: stop_time.departure_time + start_time
                                 - arrival_time_delta,
@@ -1174,6 +1171,7 @@ where
                             datetime_estimated,
                             local_zone_id: stop_time.local_zone_id,
                             precision: stop_time.precision.clone(),
+                            comment_links: None,
                         })
                         .collect();
                     start_time = start_time + Time::new(0, 0, frequency.headway_secs);

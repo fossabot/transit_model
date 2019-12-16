@@ -101,12 +101,6 @@ pub struct Collections {
     pub trip_properties: CollectionWithId<TripProperty>,
     pub geometries: CollectionWithId<Geometry>,
     pub admin_stations: Collection<AdminStation>,
-    #[serde(skip)]
-    pub stop_time_headsigns: HashMap<(Idx<VehicleJourney>, u32), String>,
-    #[serde(skip)]
-    pub stop_time_ids: HashMap<(Idx<VehicleJourney>, u32), String>,
-    #[serde(skip)]
-    pub stop_time_comments: HashMap<(Idx<VehicleJourney>, u32), Idx<Comment>>,
     pub prices_v1: Collection<PriceV1>,
     pub od_fares_v1: Collection<ODFareV1>,
     pub fares_v1: Collection<FareV1>,
@@ -147,9 +141,6 @@ impl Collections {
             trip_properties,
             geometries,
             admin_stations,
-            stop_time_headsigns,
-            stop_time_ids,
-            stop_time_comments,
             prices_v1,
             od_fares_v1,
             fares_v1,
@@ -243,7 +234,6 @@ impl Collections {
         }
 
         let sp_idx_to_id = idx_to_id(&stop_points);
-        let vj_idx_to_id = idx_to_id(&vehicle_journeys);
         let c_idx_to_id = idx_to_id(&comments);
 
         self.comments.try_merge(comments)?;
@@ -267,39 +257,6 @@ impl Collections {
         vehicle_journeys = CollectionWithId::new(vjs)?;
         self.vehicle_journeys.try_merge(vehicle_journeys)?;
 
-        fn update_vj_idx<'a, T: Clone>(
-            map: &'a HashMap<(Idx<VehicleJourney>, u32), T>,
-            vjs: &'a CollectionWithId<VehicleJourney>,
-            vj_idx_to_id: &'a HashMap<Idx<VehicleJourney>, String>,
-        ) -> impl Iterator<Item = ((Idx<VehicleJourney>, u32), T)> + 'a {
-            map.iter()
-                .filter_map(move |((old_vj_idx, sequence), value)| {
-                    get_new_idx(*old_vj_idx, vj_idx_to_id, vjs)
-                        .map(|new_vj_idx| ((new_vj_idx, *sequence), value.clone()))
-                })
-        }
-
-        // Update vehicle journey idx
-        self.stop_time_headsigns.extend(update_vj_idx(
-            &stop_time_headsigns,
-            &self.vehicle_journeys,
-            &vj_idx_to_id,
-        ));
-
-        self.stop_time_ids.extend(update_vj_idx(
-            &stop_time_ids,
-            &self.vehicle_journeys,
-            &vj_idx_to_id,
-        ));
-
-        let mut new_stop_time_comments = HashMap::new();
-        for ((old_vj_idx, sequence), value) in &stop_time_comments {
-            let new_vj_idx =
-                get_new_idx(*old_vj_idx, &vj_idx_to_id, &self.vehicle_journeys).unwrap();
-            let new_c_idx = get_new_idx(*value, &c_idx_to_id, &self.comments).unwrap();
-            new_stop_time_comments.insert((new_vj_idx, *sequence), new_c_idx);
-        }
-        self.stop_time_comments.extend(new_stop_time_comments);
         self.calendars.try_merge(calendars)?;
         self.companies.try_merge(companies)?;
         self.equipments.try_merge(equipments)?;
@@ -393,7 +350,6 @@ impl Collections {
         physical_modes_used.insert(String::from(BIKE_SHARING_SERVICE_PHYSICAL_MODE));
         physical_modes_used.insert(String::from(CAR_PHYSICAL_MODE));
 
-        let vj_id_to_old_idx = self.vehicle_journeys.get_id_to_idx().clone();
         let comment_id_to_old_idx = self.comments.get_id_to_idx().clone();
         let stop_point_id_to_old_idx = self.stop_points.get_id_to_idx().clone();
 
@@ -584,19 +540,13 @@ impl Collections {
             })
             .collect::<Vec<_>>();
 
-        let vj_idx_to_old_id: HashMap<&Idx<VehicleJourney>, &String> =
-            vj_id_to_old_idx.iter().map(|(id, idx)| (idx, id)).collect();
-        comments_used.extend(self.stop_time_comments.iter().filter_map(
-            |((old_vj_idx, _), old_comment_idx)| {
-                vj_idx_to_old_id.get(&old_vj_idx).and_then(|&old_vj_id| {
-                    if vjs.contains_key(old_vj_id) {
-                        Some(self.comments[*old_comment_idx].id.clone())
-                    } else {
-                        None
-                    }
-                })
-            },
-        ));
+        comments_used.extend(
+            vjs.values()
+                .flat_map(|vj| &vj.stop_times)
+                .filter_map(|stop_time| stop_time.comment_links.as_ref())
+                .flat_map(|comment_links| &**comment_links)
+                .map(|&comment_idx| self.comments[comment_idx].id.clone()),
+        );
 
         self.comments
             .retain(log_predicate("Comment", |comment: &Comment| {
@@ -633,44 +583,6 @@ impl Collections {
         self.vehicle_journeys = CollectionWithId::new(vjs)?;
         self.stop_locations = CollectionWithId::new(stop_locations)?;
 
-        let vj_old_idx_to_new_idx: HashMap<Idx<VehicleJourney>, Idx<VehicleJourney>> = self
-            .vehicle_journeys
-            .iter()
-            .map(|(new_idx, vj)| (vj_id_to_old_idx[&vj.id], new_idx))
-            .collect();
-        self.stop_time_comments = self
-            .stop_time_comments
-            .iter()
-            .filter_map(|((old_vj_idx, seq), comment_old_idx)| {
-                match (
-                    vj_old_idx_to_new_idx.get(old_vj_idx),
-                    comment_old_idx_to_new_idx.get(&comment_old_idx),
-                ) {
-                    (Some(new_vj_idx), Some(new_comment_idx)) => {
-                        Some(((*new_vj_idx, *seq), *new_comment_idx))
-                    }
-                    _ => None,
-                }
-            })
-            .collect();
-        self.stop_time_ids = self
-            .stop_time_ids
-            .iter()
-            .filter_map(|((old_vj_id, seq), stop_time_id)| {
-                vj_old_idx_to_new_idx
-                    .get(&old_vj_id)
-                    .map(|new_vj_id| ((*new_vj_id, *seq), stop_time_id.clone()))
-            })
-            .collect();
-        self.stop_time_headsigns = self
-            .stop_time_headsigns
-            .iter()
-            .filter_map(|((old_vj_id, seq), headsign)| {
-                vj_old_idx_to_new_idx
-                    .get(&old_vj_id)
-                    .map(|new_vj_id| ((*new_vj_id, *seq), headsign.clone()))
-            })
-            .collect();
         self.grid_rel_calendar_line
             .retain(|grid_rel_calendar_line| {
                 line_ids_used.contains(&grid_rel_calendar_line.line_id)
