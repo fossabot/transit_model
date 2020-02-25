@@ -84,3 +84,39 @@ jobs:
       with:
         command: test
         args: --workspace --verbose --all-features
+
+  coverage:
+    name: Code coverage
+    runs-on: ubuntu-latest
+    steps:
+    - name: Install proj
+      run: |
+        wget --quiet --output-document - "https://kisiodigital.jfrog.io/kisiodigital/api/gpg/key/public" | sudo apt-key add -
+        echo "deb [arch=amd64] https://kisiodigital.jfrog.io/kisiodigital/debian-local stretch main" | sudo tee /etc/apt/sources.list.d/kisio-digital.list
+        sudo apt update
+        sudo apt install --yes libxml2-utils pkg-config libssl-dev clang proj=${PROJ_VERSION}
+    - uses: actions/checkout@master
+    - name: Checkout Submodules
+      uses: textbook/git-checkout-submodule-action@2.1.1
+    - name: Install Rust nightly
+      uses: actions-rs/toolchain@v1
+      with:
+          toolchain: nightly
+          profile: minimal
+          override: true
+    - name: Run tests
+      uses: actions-rs/cargo@v1
+      with:
+        command: test
+        args: --workspace --verbose --all-features
+      env:
+        CARGO_INCREMENTAL: '0'
+        RUSTFLAGS: '-Zprofile -Ccodegen-units=1 -Cinline-threshold=0 -Clink-dead-code -Coverflow-checks=off -Zno-landing-pads'
+    - id: grcov
+      name: Generate Code Coverage
+      uses: actions-rs/grcov@v0.1
+    - name: Coveralls upload
+      uses: coverallsapp/github-action@master
+      with:
+        github-token: ${{ secrets.GITHUB_TOKEN }}
+        path-to-lcov: ${{ steps.grcov.outputs.report }}
