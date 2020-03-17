@@ -1,0 +1,15 @@
+[package]
+name = "gtfs2ntfs"
+version = "0.1.0"
+authors = ["Kisio Digital <team.coretools@kisio.org>"]
+license = "AGPL-3.0-only"
+description = "Binary to convert Transit data from GTFS format to NTFS"
+edition = "2018"
+keywords = ["gtfs", "ntfs", "transit"]
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+log = "0.4"
+structopt = "0.3"
+transit_model = "0.15"

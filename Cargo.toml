@@ -29,6 +29,7 @@ travis-ci = { repository = "CanalTP/transit_model" }
 [workspace]
 members = [
   "collection",
+  "gtfs2ntfs",
   "relations",
   "transit_model_procmacro",
 ]
