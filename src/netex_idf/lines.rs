@@ -12,7 +12,7 @@
 // You should have received a copy of the GNU Affero General Public License
 // along with this program. If not, see <https://www.gnu.org/licenses/>
 
-use super::{accessibility::*, modes::MODES, EUROPE_PARIS_TIMEZONE};
+use super::{accessibility::*, attribute_with::AttributeWith, modes::MODES, EUROPE_PARIS_TIMEZONE};
 use crate::{
     minidom_utils::{TryAttribute, TryOnlyChild},
     model::Collections,
@@ -62,6 +62,13 @@ pub struct LineNetexIDF {
     pub trip_property_id: Option<String>,
 }
 impl_id!(LineNetexIDF);
+
+fn extract_network_id(raw_id: &str) -> Result<&str> {
+    raw_id
+        .split(':')
+        .nth(2)
+        .ok_or_else(|| format_err!("Cannot extract Network identifier from '{}'", raw_id))
+}
 
 fn line_color(line: &Element, child_name: &str) -> Option<Rgb> {
     line.only_child("Presentation")
@@ -118,7 +125,7 @@ fn load_netex_lines(
                 let private_code = line.only_child("PrivateCode").map(Element::text);
                 let network_id: String = skip_fail!(line
                     .try_only_child("RepresentedByGroupRef")
-                    .and_then(|netref| netref.try_attribute("ref")));
+                    .and_then(|netref| netref.try_attribute_with("ref", extract_network_id)));
                 if !networks.contains_id(&network_id) {
                     warn!("Failed to find network {} for line {}", network_id, id);
                     continue;
@@ -206,13 +213,17 @@ fn make_networks_companies(
     let mut companies = CollectionWithId::default();
     for frame in frames.get(&FrameType::Service).unwrap_or(&vec![]) {
         for network in frame.children().filter(|e| e.name() == "Network") {
-            let id = network.try_attribute("id")?;
+            let raw_network_id = network.try_attribute("id")?;
+            let id = network.try_attribute_with("id", extract_network_id)?;
             let name = network.try_only_child("Name")?.text().parse()?;
             let timezone = Some(String::from(EUROPE_PARIS_TIMEZONE));
+            let mut codes = KeysValues::default();
+            codes.insert((String::from("source"), raw_network_id));
             networks.push(Network {
                 id,
                 name,
                 timezone,
+                codes,
                 ..Default::default()
             })?;
         }
@@ -326,7 +337,7 @@ mod tests {
         frames.insert(FrameType::Service, vec![&service_frame_lines]);
 
         let networks = CollectionWithId::new(vec![Network {
-            id: String::from("FR1:Network:1:LOC"),
+            id: String::from("1"),
             name: String::from("Network1"),
             ..Default::default()
         }])
@@ -366,7 +377,7 @@ mod tests {
         frames.insert(FrameType::Service, vec![&service_frame_lines]);
 
         let networks = CollectionWithId::new(vec![Network {
-            id: String::from("FR1:Network:1:LOC"),
+            id: String::from("1"),
             name: String::from("Network1"),
             ..Default::default()
         }])
