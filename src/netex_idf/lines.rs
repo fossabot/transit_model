@@ -52,6 +52,7 @@ pub struct LineNetexIDF {
     pub id: String,
     pub name: String,
     pub code: Option<String>,
+    pub source_code: String,
     pub private_code: Option<String>,
     pub network_id: String,
     pub company_id: String,
@@ -75,6 +76,13 @@ fn extract_company_id(raw_id: &str) -> Result<&str> {
         .split(':')
         .nth(2)
         .ok_or_else(|| format_err!("Cannot extract Company identifier from '{}'", raw_id))
+}
+
+pub fn extract_line_id(raw_id: &str) -> Result<&str> {
+    raw_id
+        .split(':')
+        .nth(2)
+        .ok_or_else(|| format_err!("Cannot extract Line identifier from '{}'", raw_id))
 }
 
 fn line_color(line: &Element, child_name: &str) -> Option<Rgb> {
@@ -122,7 +130,8 @@ fn load_netex_lines(
     for frame in frames.get(&FrameType::Service).unwrap_or(&vec![]) {
         if let Ok(lines_node) = frame.try_only_child("lines") {
             for line in lines_node.children().filter(|e| e.name() == "Line") {
-                let id = line.try_attribute("id")?;
+                let raw_line_id = line.try_attribute("id")?;
+                let id = line.try_attribute_with("id", extract_line_id)?;
                 let name = line.try_only_child("Name")?.text().parse()?;
                 let code = line
                     .try_only_child_with_filter("PublicCode", |e| !e.text().is_empty())
@@ -168,6 +177,7 @@ fn load_netex_lines(
                     id,
                     name,
                     code,
+                    source_code: raw_line_id,
                     private_code,
                     network_id,
                     company_id,
@@ -197,8 +207,15 @@ fn make_lines(lines_netex_idf: &CollectionWithId<LineNetexIDF>) -> Result<Collec
         let codes: KeysValues = ln
             .private_code
             .clone()
-            .map(|pc| vec![("Netex_PrivateCode".into(), pc)].into_iter().collect())
-            .unwrap_or_else(BTreeSet::new);
+            .map(|pc| {
+                vec![
+                    ("source".into(), ln.source_code.clone()),
+                    ("Netex_PrivateCode".into(), pc),
+                ]
+                .into_iter()
+                .collect()
+            })
+            .unwrap_or_else(KeysValues::default);
         lines.push(Line {
             id: ln.id.clone(),
             name: ln.name.clone(),
@@ -326,12 +343,12 @@ mod tests {
     use std::collections::HashMap;
 
     #[test]
-    #[should_panic(expected = "Unknown mode UNKNOWN found for line FR1:Line:C00001")]
+    #[should_panic(expected = "Unknown mode UNKNOWN found for line C00001")]
     fn test_load_netex_lines_unknown_mode() {
         let xml = r#"
             <ServiceFrame>
                <lines>
-                  <Line id="FR1:Line:C00001">
+                  <Line id="FR1:Line:C00001:">
                      <Name>Line 01</Name>
                      <ShortName>01</ShortName>
                      <TransportMode>UNKNOWN</TransportMode>
@@ -365,14 +382,14 @@ mod tests {
         let xml = r#"
             <ServiceFrame>
                <lines>
-                  <Line id="FR1:Line:C00001">
+                  <Line id="FR1:Line:C00001:">
                      <Name>Line 01</Name>
                      <ShortName>01</ShortName>
                      <TransportMode>bus</TransportMode>
                      <RepresentedByGroupRef ref="FR1:Network:1:LOC"/>
                      <OperatorRef ref="FR1:Operator:1:LOC"/>
                   </Line>
-                  <Line id="FR1:Line:C00002">
+                  <Line id="FR1:Line:C00002:">
                      <Name>Line 02</Name>
                      <ShortName>02</ShortName>
                      <TransportMode>bus</TransportMode>                     
